@@ -1,23 +1,25 @@
 use std::{iter, sync::Arc};
 
 use winit::{
-    application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
+    application::ApplicationHandler,
+    event::*,
+    event_loop::{EventLoop, ActiveEventLoop},
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
 };
 
-// This stores the state of our game
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
+    render_pipeline: wgpu::RenderPipeline,
     window: Arc<Window>,
 }
 
 impl State {
-    // We don't need this to be async right now,
-    // but we will in the next tutorial
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+    async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -35,7 +37,8 @@ impl State {
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
-            .await?;
+            .await
+            .unwrap();
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -43,12 +46,12 @@ impl State {
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
+                trace: wgpu::Trace::Off, // Trace path
             })
-            .await?;
+            .await
+            .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-
         // Shader code in this tutorial assumes an Srgb surface texture. Using a different
         // one will result all the colors comming out darker. If you want to support non
         // Srgb surfaces, you'll need to account for that when drawing to the frame.
@@ -65,9 +68,69 @@ impl State {
             height: size.height,
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
-            desired_maximum_frame_latency: 2,
             view_formats: vec![],
+            desired_maximum_frame_latency: 2,
         };
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
+                // or Features::POLYGON_MODE_POINT
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            // If the pipeline will be used with a multiview render pass, this
+            // indicates how many array layers the attachments will have.
+            multiview: None,
+            // Useful for optimizing shader compilation on Android
+            cache: None,
+        });
 
         Ok(Self {
             surface,
@@ -75,6 +138,7 @@ impl State {
             queue,
             config,
             is_surface_configured: false,
+            render_pipeline,
             window,
         })
     }
@@ -88,11 +152,18 @@ impl State {
         }
     }
 
+    fn handle_key(&mut self, event_loop: &ActiveEventLoop, key: KeyCode, pressed: bool) {
+        match (key, pressed) {
+            (KeyCode::Escape, true) => event_loop.exit(),
+            _ => {}
+        }
+    }
+
     fn update(&mut self) {}
-    
+
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
-        
+
         // We can't render unless the surface is configured
         if !self.is_surface_configured {
             return Ok(());
@@ -110,7 +181,7 @@ impl State {
             });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -129,19 +200,15 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw(0..3, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
         Ok(())
-    }
-    
-    fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
-        match (code, is_pressed) {
-            (KeyCode::Escape, true) => event_loop.exit(),
-            _ => {}
-        }
     }
 }
 
@@ -187,6 +254,7 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                state.update();
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
