@@ -1,21 +1,22 @@
-use std::{iter, sync::Arc};
+use std::time::Instant;
+use std::sync::Arc;
+use std::{iter};
 
+use cgmath::prelude::*;
 use wgpu::util::DeviceExt;
-use winit::{
-    application::ApplicationHandler,
-    event::*,
-    event_loop::{EventLoop, ActiveEventLoop},
-    keyboard::{KeyCode, PhysicalKey},
-    window::Window,
-};
+use winit::application::ApplicationHandler;
+use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::KeyCode;
+use winit::{event::*, event_loop::EventLoop, keyboard::PhysicalKey, window::Window};
 
 mod texture;
+mod camera;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     position: [f32; 3],
-    tex_coords: [f32; 2], // NEW!
+    tex_coords: [f32; 2],
 }
 
 impl Vertex {
@@ -34,156 +35,35 @@ impl Vertex {
 }
 
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.00759614], }, // A
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.43041354], }, // B
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.949397], }, // C
-    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.84732914], }, // D
-    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.2652641], }, // E
+    Vertex { position: [0.5, 0.5, 0.0], tex_coords: [1.0, 0.0], }, // top-right
+    Vertex { position: [-0.5, 0.5, 0.0], tex_coords: [0.0, 0.0], }, // top-left
+    Vertex { position: [-0.5, -0.5, 0.0], tex_coords: [0.0, 1.0], }, // bottom-left
+    Vertex { position: [0.5, -0.5, 0.0], tex_coords: [1.0, 1.0], }, // bottom-right
 ];
 
 const INDICES: &[u16] = &[
-    0, 1, 4,
-    1, 2, 4,
-    2, 3, 4,
+    0, 1, 2, // Triangle 1
+    0, 2, 3, // Triangle 2
 ];
 
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
-    cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
-    cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
-    cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
-    cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
-);
-
-struct Camera {
-    eye: cgmath::Point3<f32>,
-    target: cgmath::Point3<f32>,
-    up: cgmath::Vector3<f32>,
-    aspect: f32,
-    fovy: f32,
-    znear: f32,
-    zfar: f32,
-}
-
-impl Camera {
-    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-        // 1.
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-        // 2.
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
-
-        // 3.
-        return OPENGL_TO_WGPU_MATRIX * proj * view;
-    }
-}
-
-// We need this for Rust to store our data correctly for the shaders
 #[repr(C)]
-// This is so we can store this in a buffer
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
-    // We can't use cgmath with bytemuck directly, so we'll have
-    // to convert the Matrix4 into a 4x4 f32 array
+    // view_position: [f32; 4],
     view_proj: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
     fn new() -> Self {
-        use cgmath::SquareMatrix;
         Self {
+            // view_position: [0.0; 4],
             view_proj: cgmath::Matrix4::identity().into(),
         }
     }
 
-    fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.build_view_projection_matrix().into();
-    }
-}
-
-struct CameraController {
-    speed: f32,
-    is_up_pressed: bool,
-    is_down_pressed: bool,
-    is_forward_pressed: bool,
-    is_backward_pressed: bool,
-    is_left_pressed: bool,
-    is_right_pressed: bool,
-}
-
-impl CameraController {
-    fn new(speed: f32) -> Self {
-        Self {
-            speed,
-            is_up_pressed: false,
-            is_down_pressed: false,
-            is_forward_pressed: false,
-            is_backward_pressed: false,
-            is_left_pressed: false,
-            is_right_pressed: false,
-        }
-    }
-
-    fn handle_key(&mut self, key: KeyCode, is_pressed: bool) -> bool {
-        match key {
-            KeyCode::Space => {
-                self.is_up_pressed = is_pressed;
-                true
-            }
-            KeyCode::ShiftLeft => {
-                self.is_down_pressed = is_pressed;
-                true
-            }
-            KeyCode::KeyW | KeyCode::ArrowUp => {
-                self.is_forward_pressed = is_pressed;
-                true
-            }
-            KeyCode::KeyA | KeyCode::ArrowLeft => {
-                self.is_left_pressed = is_pressed;
-                true
-            }
-            KeyCode::KeyS | KeyCode::ArrowDown => {
-                self.is_backward_pressed = is_pressed;
-                true
-            }
-            KeyCode::KeyD | KeyCode::ArrowRight => {
-                self.is_right_pressed = is_pressed;
-                true
-            }
-            _ => false,
-        }
-    }
-
-
-    fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
-        let forward = camera.target - camera.eye;
-        let forward_norm = forward.normalize();
-        let forward_mag = forward.magnitude();
-
-        // Prevents glitching when camera gets too close to the
-        // center of the scene.
-        if self.is_forward_pressed && forward_mag > self.speed {
-            camera.eye += forward_norm * self.speed;
-        }
-        if self.is_backward_pressed {
-            camera.eye -= forward_norm * self.speed;
-        }
-
-        let right = forward_norm.cross(camera.up);
-
-        // Redo radius calc in case the up/ down is pressed.
-        let forward = camera.target - camera.eye;
-        let forward_mag = forward.magnitude();
-
-        if self.is_right_pressed {
-            // Rescale the distance between the target and eye so
-            // that it doesn't change. The eye therefore still
-            // lies on the circle made by the target and eye.
-            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
-        }
-        if self.is_left_pressed {
-            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
-        }
+    fn update_view_proj(&mut self, camera: &camera::Camera, projection: &camera::Projection) {
+        // self.view_position = camera.position.to_homogeneous().into();
+        self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into()
     }
 }
 
@@ -199,11 +79,13 @@ pub struct State {
     num_indices: u32,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
-    camera: Camera,
-    camera_controller: CameraController,
+    camera: camera::Camera,
+    projection: camera::Projection,
+    camera_controller: camera::CameraController,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    mouse_pressed: bool,
     window: Arc<Window>,
 }
 
@@ -306,24 +188,13 @@ impl State {
             }
         );
 
-        let camera = Camera {
-            // position the camera 1 unit up and 2 units back
-            // +z is out of the screen
-            eye: (0.0, 1.0, 2.0).into(),
-            // have it look at the origin
-            target: (0.0, 0.0, 0.0).into(),
-            // which way is "up"
-            up: cgmath::Vector3::unit_y(),
-            aspect: config.width as f32 / config.height as f32,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
-        };
-
-        let camera_controller = CameraController::new(0.2);
+        let camera = camera::Camera::new((0.0, 0.0, 5.0), cgmath::Deg(0.0), cgmath::Deg(0.0));
+        let projection =
+            camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+        let camera_controller = camera::CameraController::new(4.0, 0.5);
 
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
+        camera_uniform.update_view_proj(&camera, &projection);
 
         let camera_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
@@ -456,16 +327,19 @@ impl State {
             diffuse_bind_group,
             diffuse_texture,
             camera,
+            projection,
             camera_controller,
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            mouse_pressed: false,
             window,
         })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
+            self.projection.resize(width, height);
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
@@ -474,16 +348,29 @@ impl State {
     }
 
     fn handle_key(&mut self, event_loop: &ActiveEventLoop, key: KeyCode, pressed: bool) {
-        if key == KeyCode::Escape && pressed {
-            event_loop.exit();
-        } else {
-            self.camera_controller.handle_key(key, pressed);
+        if !self.camera_controller.handle_key(key, pressed) {
+            match (key, pressed) {
+                (KeyCode::Escape, true) => event_loop.exit(),
+                _ => {}
+            }
         }
     }
 
-    fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
-        self.camera_uniform.update_view_proj(&self.camera);
+    fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => self.mouse_pressed = pressed,
+            _ => {}
+        }
+    }
+
+    fn handle_mouse_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.camera_controller.handle_scroll(delta);
+    }
+
+    fn update(&mut self, dt: std::time::Duration) {
+        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.camera_uniform
+            .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
 
@@ -532,7 +419,7 @@ impl State {
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1); // 2.
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -544,12 +431,14 @@ impl State {
 
 pub struct App {
     state: Option<State>,
+    last_time: Instant,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             state: None,
+            last_time: Instant::now(),
         }
     }
 }
@@ -569,6 +458,27 @@ impl ApplicationHandler<State> for App {
         self.state = Some(event);
     }
 
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        let state = if let Some(state) = &mut self.state {
+            state
+        } else {
+            return;
+        };
+        match event {
+            DeviceEvent::MouseMotion { delta: (dx, dy) } => {
+                if state.mouse_pressed {
+                    state.camera_controller.handle_mouse(dx, dy);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -584,7 +494,9 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.update();
+                let dt = self.last_time.elapsed();
+                self.last_time = Instant::now();
+                state.update(dt);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
@@ -597,11 +509,14 @@ impl ApplicationHandler<State> for App {
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
-                (MouseButton::Left, true) => {}
-                (MouseButton::Left, false) => {}
-                _ => {}
-            },
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button,
+                ..
+            } => state.handle_mouse_button(button, btn_state.is_pressed()),
+            WindowEvent::MouseWheel { delta, .. } => {
+                state.handle_mouse_scroll(&delta);
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
