@@ -1,17 +1,17 @@
-use cgmath::*;
+use cgmath::{InnerSpace, Matrix4, Point3, Rad, Vector3, Vector4, perspective};
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 use winit::dpi::PhysicalPosition;
-use winit::event::*;
+use winit::event::MouseScrollDelta;
 use winit::keyboard::KeyCode;
 
 // convert cgmath to wgpu matrix (cgmath is built for OpenGL, aka -1 to 1 depth range, wgpu uses 0 to 1 depth range)
 #[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
-    cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
-    cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
-    cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
-    cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
+pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::from_cols(
+    Vector4::new(1.0, 0.0, 0.0, 0.0),
+    Vector4::new(0.0, 1.0, 0.0, 0.0),
+    Vector4::new(0.0, 0.0, 0.5, 0.0),
+    Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
@@ -45,9 +45,10 @@ impl Camera {
 
         let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
         let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
-        let forward = Vector3::new(cos_pitch * sin_yaw, sin_pitch, -cos_pitch * cos_yaw).normalize();
+        let forward =
+            Vector3::new(cos_pitch * sin_yaw, sin_pitch, -cos_pitch * cos_yaw).normalize();
         let up = Vector3::unit_y();
-        
+
         let look_to_matrix = Matrix4::look_to_rh(self.position, forward, up);
 
         return look_to_matrix;
@@ -113,11 +114,7 @@ impl CameraController {
     }
 
     pub fn handle_key(&mut self, key: KeyCode, pressed: bool) -> bool {
-        let amount = if pressed {
-            1.0
-        } else {
-            0.0
-        };
+        let amount = if pressed { 1.0 } else { 0.0 };
         match key {
             KeyCode::KeyW | KeyCode::ArrowUp => {
                 self.amount_forward = amount;
