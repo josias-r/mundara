@@ -73,7 +73,7 @@ impl Camera {
             forward_vec * forward_amount + right_vec * right_amount + up_vec * up_amount;
     }
 
-    pub fn calc_rotation(&self) -> (Quaternion<f32>, Matrix4<f32>) {
+    pub fn calc_rotation(&self) -> (Matrix4<f32>, Matrix4<f32>) {
         // get inverted rotation matrix from orientation
         let rotation_matrix: Matrix4<f32> = self.orientation.into();
         let inverted_rotation_matrix = rotation_matrix.invert().unwrap_or_else(Matrix4::zero);
@@ -85,7 +85,7 @@ impl Camera {
         let combined_matrix = inverted_rotation_matrix * inverted_translation_matrix;
 
         // return the quaternion and the combined matrix
-        (self.orientation, combined_matrix)
+        (inverted_rotation_matrix, combined_matrix)
     }
 }
 

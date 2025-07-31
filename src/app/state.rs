@@ -39,7 +39,7 @@ impl ScreenUniform {
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_position: [f32; 4],
-    camera_rot_q: [f32; 4],
+    camera_rot_m: [[f32; 4]; 4],
     view_proj: [[f32; 4]; 4],
     projection_dimensions: [f32; 2],
     _pad: [u32; 2], // Padding to align to 16 bytes
@@ -51,7 +51,7 @@ impl CameraUniform {
     fn new(camera: &Camera, projection: &Projection) -> Self {
         let mut uniform = Self {
             view_position: [0.0; 4],
-            camera_rot_q: [0.0; 4],
+            camera_rot_m: [[0.0; 4]; 4],
             view_proj: [[0.0; 4]; 4],
             projection_dimensions: [0.0; 2],
             _pad: [0; 2],
@@ -65,7 +65,7 @@ impl CameraUniform {
     fn update_view_proj(&mut self, camera: &Camera, projection: &Projection) {
         self.view_position = camera.position.to_homogeneous().into();
         let rotation = camera.calc_rotation();
-        self.camera_rot_q = rotation.0.into();
+        self.camera_rot_m = rotation.0.into();
         self.view_proj = (projection.calc_matrix() * rotation.1).into();
         self.projection_dimensions = projection.calc_plane_dimensions().into();
         self.znear = projection.znear;
@@ -317,7 +317,7 @@ impl State {
             cgmath::Deg(0.0),
         );
         let projection =
-            Projection::new(config.width, config.height, cgmath::Deg(75.0), 0.1, 100.0);
+            Projection::new(config.width, config.height, cgmath::Deg(75.0), 0.5, 100.0);
         let camera_controller = CameraController::new(4.0, 2.0);
 
         let screen_uniform = ScreenUniform::new(config.width, config.height);
