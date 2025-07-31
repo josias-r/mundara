@@ -1,7 +1,12 @@
 // Vertex shader
 struct CameraUniform {
+    view_position: vec4<f32>,
+    camera_rot_q: vec4<f32>,
     view_proj: mat4x4<f32>,
-};
+    projection_dimensions: vec2<f32>,
+    znear: f32,
+}
+
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 

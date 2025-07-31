@@ -1,7 +1,7 @@
 use std::iter;
 use std::sync::Arc;
 
-use cgmath::{InnerSpace, Matrix4, Quaternion, Rotation3, SquareMatrix, Vector3, Zero};
+use cgmath::{InnerSpace, Matrix4, Quaternion, Rotation3, Vector3, Zero};
 use wgpu::util::DeviceExt;
 
 use winit::event::{MouseButton, MouseScrollDelta};
@@ -14,6 +14,63 @@ use crate::engine::CameraController;
 use crate::engine::Projection;
 use crate::engine::Texture;
 use crate::engine::create_render_pipeline;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct ScreenUniform {
+    resolution: [f32; 2],
+    _pad: [f32; 2], // Padding to align to 16 bytes
+}
+
+impl ScreenUniform {
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            resolution: [width as f32, height as f32],
+            _pad: [0.0; 2],
+        }
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.resolution = [width as f32, height as f32];
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    view_position: [f32; 4],
+    camera_rot_q: [f32; 4],
+    view_proj: [[f32; 4]; 4],
+    projection_dimensions: [f32; 2],
+    _pad: [u32; 2], // Padding to align to 16 bytes
+    znear: f32,
+    _pad2: [u32; 3], // Padding to align to 16 bytes
+}
+
+impl CameraUniform {
+    fn new(camera: &Camera, projection: &Projection) -> Self {
+        let mut uniform = Self {
+            view_position: [0.0; 4],
+            camera_rot_q: [0.0; 4],
+            view_proj: [[0.0; 4]; 4],
+            projection_dimensions: [0.0; 2],
+            _pad: [0; 2],
+            znear: 0.5,
+            _pad2: [0; 3],
+        };
+        uniform.update_view_proj(camera, projection);
+        uniform
+    }
+
+    fn update_view_proj(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.to_homogeneous().into();
+        let rotation = camera.calc_rotation();
+        self.camera_rot_q = rotation.0.into();
+        self.view_proj = (projection.calc_matrix() * rotation.1).into();
+        self.projection_dimensions = projection.calc_plane_dimensions().into();
+        self.znear = projection.znear;
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -125,27 +182,6 @@ const INSTANCE_DISPLACEMENT: Vector3<f32> = Vector3::new(
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
 );
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    // view_position: [f32; 4],
-    view_proj: [[f32; 4]; 4],
-}
-
-impl CameraUniform {
-    fn new() -> Self {
-        Self {
-            // view_position: [0.0; 4],
-            view_proj: Matrix4::identity().into(),
-        }
-    }
-
-    fn update_view_proj(&mut self, camera: &Camera, projection: &Projection) {
-        // self.view_position = camera.position.to_homogeneous().into();
-        self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into()
-    }
-}
-
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -153,6 +189,7 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
+    light_render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
@@ -162,6 +199,9 @@ pub struct State {
     camera: Camera,
     projection: Projection,
     pub camera_controller: CameraController,
+    screen_uniform: ScreenUniform,
+    screen_buffer: wgpu::Buffer,
+    screen_bind_group: wgpu::BindGroup,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -270,13 +310,47 @@ impl State {
             label: Some("diffuse_bind_group"),
         });
 
-        let camera = Camera::new((0.0, 0.0, 5.0), cgmath::Deg(0.0), cgmath::Deg(0.0));
+        let camera = Camera::new(
+            (0.0, 0.0, 5.0),
+            cgmath::Deg(0.0),
+            cgmath::Deg(0.0),
+            cgmath::Deg(0.0),
+        );
         let projection =
-            Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+            Projection::new(config.width, config.height, cgmath::Deg(75.0), 0.1, 100.0);
         let camera_controller = CameraController::new(4.0, 0.5);
 
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera, &projection);
+        let screen_uniform = ScreenUniform::new(config.width, config.height);
+
+        let screen_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Screen Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[screen_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let screen_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("screen_uniform_bind_group_layout"),
+            });
+        let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &screen_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: screen_buffer.as_entire_binding(),
+            }],
+            label: Some("screen_bind_group"),
+        });
+
+        let camera_uniform = CameraUniform::new(&camera, &projection);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -288,7 +362,7 @@ impl State {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -327,6 +401,26 @@ impl State {
                 config.format,
                 Some(Texture::DEPTH_FORMAT),
                 &[Vertex::desc(), InstanceRaw::desc()],
+                shader,
+            )
+        };
+
+        let light_render_pipeline = {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Light Pipeline Layout"),
+                bind_group_layouts: &[&camera_bind_group_layout, &screen_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: Some("Light Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("../light.wgsl").into()),
+            };
+            create_render_pipeline(
+                &device,
+                &layout,
+                config.format,
+                Some(Texture::DEPTH_FORMAT),
+                &[],
                 shader,
             )
         };
@@ -383,6 +477,7 @@ impl State {
             config,
             is_surface_configured: false,
             render_pipeline,
+            light_render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
@@ -395,6 +490,9 @@ impl State {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            screen_uniform,
+            screen_buffer,
+            screen_bind_group,
             mouse_pressed: false,
             instances,
             instance_buffer,
@@ -405,6 +503,12 @@ impl State {
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.projection.resize(width, height);
+            self.screen_uniform.resize(width, height);
+            self.queue.write_buffer(
+                &self.screen_buffer,
+                0,
+                bytemuck::cast_slice(&[self.screen_uniform]),
+            );
             self.config.width = width;
             self.config.height = height;
             self.depth_texture =
@@ -472,9 +576,9 @@ impl State {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
+                            r: 0.02,
+                            g: 0.01,
+                            b: 0.04,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -499,6 +603,11 @@ impl State {
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
+
+            // render_pass.set_pipeline(&self.light_render_pipeline);
+            // render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            // render_pass.set_bind_group(1, &self.screen_bind_group, &[]);
+            // render_pass.draw(0..6, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
