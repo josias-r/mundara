@@ -7,10 +7,12 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::Window;
 
-mod state;
+mod graphic_context;
+mod render;
 
 pub struct App {
-    state: Option<state::State>,
+    window: Option<Arc<Window>>,
+    render: Option<render::Render>,
     last_fps_log_time: Instant,
     last_time: Instant,
     last_fps: f32,
@@ -19,7 +21,8 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         Self {
-            state: None,
+            window: None,
+            render: None,
             last_time: Instant::now(),
             last_fps_log_time: Instant::now(),
             last_fps: 0.0,
@@ -27,19 +30,17 @@ impl App {
     }
 }
 
-impl ApplicationHandler<state::State> for App {
+impl ApplicationHandler<graphic_context::GraphicContext> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
         let mut window_attributes = Window::default_attributes();
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
-        self.state = Some(pollster::block_on(state::State::new(window)).unwrap());
-    }
-
-    #[allow(unused_mut)]
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: state::State) {
-        self.state = Some(event);
+        let state = pollster::block_on(graphic_context::GraphicContext::new(&window)).unwrap();
+        let render = render::Render::new(state);
+        self.render = Some(render);
+        self.window = Some(window.clone());
     }
 
     fn device_event(
@@ -48,15 +49,15 @@ impl ApplicationHandler<state::State> for App {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
-        let state = if let Some(state) = &mut self.state {
-            state
+        let render = if let Some(render) = &mut self.render {
+            render
         } else {
             return;
         };
         match event {
             DeviceEvent::MouseMotion { delta: (dx, dy) } => {
-                if state.mouse_pressed {
-                    state.camera_controller.handle_mouse(dx, dy);
+                if render.mouse_pressed {
+                    render.camera_controller.handle_mouse(dx, dy);
                 }
             }
             _ => {}
@@ -69,14 +70,14 @@ impl ApplicationHandler<state::State> for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let state = match &mut self.state {
-            Some(canvas) => canvas,
-            None => return,
+        let render = match &mut self.render {
+            Some(render) => render,
+            None => return, // Exit early if no state is available
         };
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
+            WindowEvent::Resized(size) => render.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
                 let dt = self.last_time.elapsed();
                 self.last_time = Instant::now();
@@ -89,14 +90,25 @@ impl ApplicationHandler<state::State> for App {
                     self.last_fps_log_time = Instant::now();
                 }
 
-                state.update(dt);
-                match state.render() {
+                render.update(dt);
+                // loop redraw
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                } else {
+                    log::error!("No window available for redraw");
+                }
+                // Render the current frame
+                match render.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         log::warn!("Surface lost or outdated, reconfiguring...");
-                        let size = state.window.inner_size();
-                        state.resize(size.width, size.height);
+                        if let Some(window) = &self.window {
+                            let size = window.inner_size();
+                            render.resize(size.width, size.height);
+                        } else {
+                            log::error!("No window available to resize for reconfiguration");
+                        };
                     }
                     Err(e) => {
                         log::error!("Unable to render {}", e);
@@ -107,9 +119,9 @@ impl ApplicationHandler<state::State> for App {
                 state: btn_state,
                 button,
                 ..
-            } => state.handle_mouse_button(button, btn_state.is_pressed()),
+            } => render.handle_mouse_button(button, btn_state.is_pressed()),
             WindowEvent::MouseWheel { delta, .. } => {
-                state.handle_mouse_scroll(&delta);
+                render.handle_mouse_scroll(&delta);
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -119,7 +131,7 @@ impl ApplicationHandler<state::State> for App {
                         ..
                     },
                 ..
-            } => state.handle_key(event_loop, code, key_state.is_pressed()),
+            } => render.handle_key(event_loop, code, key_state.is_pressed()),
             _ => {}
         }
     }
