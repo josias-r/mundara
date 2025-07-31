@@ -318,7 +318,7 @@ impl State {
         );
         let projection =
             Projection::new(config.width, config.height, cgmath::Deg(75.0), 0.1, 100.0);
-        let camera_controller = CameraController::new(4.0, 0.5);
+        let camera_controller = CameraController::new(4.0, 2.0);
 
         let screen_uniform = ScreenUniform::new(config.width, config.height);
 

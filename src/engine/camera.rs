@@ -1,6 +1,6 @@
 use cgmath::{
-    Angle, InnerSpace, Matrix3, Matrix4, Point3, Quaternion, Rad, Rotation3, Vector2, Vector3,
-    Vector4, perspective,
+    Angle, EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, SquareMatrix, Vector3,
+    Vector4, Zero, perspective,
 };
 use std::time::Duration;
 use winit::dpi::PhysicalPosition;
@@ -19,63 +19,69 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::from_cols(
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
-    yaw: Rad<f32>,
-    pitch: Rad<f32>,
-    roll: Rad<f32>,
+    orientation: Quaternion<f32>,
 }
 
-impl Camera {
-    const FORWARD: Vector3<f32> = Vector3::new(0.0, 0.0, -1.0);
-    const UP: Vector3<f32> = Vector3::new(0.0, 1.0, 0.0);
-    const RIGHT: Vector3<f32> = Vector3::new(1.0, 0.0, 0.0);
+const FORWARD: Vector3<f32> = Vector3::new(0.0, 0.0, -1.0);
+const UP: Vector3<f32> = Vector3::new(0.0, 1.0, 0.0);
+const RIGHT: Vector3<f32> = Vector3::new(1.0, 0.0, 0.0);
 
+impl Camera {
     pub fn new<V: Into<Point3<f32>>, Y: Into<Rad<f32>>, P: Into<Rad<f32>>, R: Into<Rad<f32>>>(
         position: V,
         yaw: Y,
         pitch: P,
         roll: R,
     ) -> Self {
+        let pitch_quat = Quaternion::from_axis_angle(RIGHT, pitch.into());
+        let yaw_quat = Quaternion::from_axis_angle(UP, yaw.into());
+        let roll_quat = Quaternion::from_axis_angle(FORWARD, roll.into());
         Self {
             position: position.into(),
-            yaw: yaw.into(),
-            pitch: pitch.into(),
-            roll: roll.into(),
+            orientation: yaw_quat * pitch_quat * roll_quat,
         }
     }
 
-    fn move_camera(&mut self, forward: f32, right: f32, up: f32) {
-        // Calculate the forward, right, and up vectors based on the current rotation
-        let rotation = self.calc_quaternion();
-        let forward_vec = rotation * Self::FORWARD;
-        let right_vec = rotation * Self::RIGHT;
-        let up_vec = rotation * Self::UP;
+    pub fn rotate_camera<Radable: Into<Rad<f32>>>(
+        &mut self,
+        horizontal_amount: Radable,
+        vertical_amount: Radable,
+        roll_amount: Radable,
+    ) {
+        let horizontal_rotation = Quaternion::from_axis_angle(UP, horizontal_amount.into());
+        let vertical_rotation = Quaternion::from_axis_angle(RIGHT, vertical_amount.into());
+        let roll_rotation = Quaternion::from_axis_angle(FORWARD, roll_amount.into());
 
-        // Update the camera position based on the movement amounts
-        self.position += forward_vec * forward + right_vec * right + up_vec * up;
+        // Update the camera orientation by applying the rotations
+        self.orientation =
+            horizontal_rotation * vertical_rotation * roll_rotation * self.orientation;
     }
 
-    fn calc_quaternion(&self) -> Quaternion<f32> {
-        let pitch_quat = Quaternion::from_axis_angle(Vector3::unit_x(), self.pitch);
-        let yaw_quat = Quaternion::from_axis_angle(Vector3::unit_y(), self.yaw);
-        let roll_quat = Quaternion::from_axis_angle(Vector3::unit_z(), self.roll);
+    fn move_camera(&mut self, forward_amount: f32, right_amount: f32, up_amount: f32) {
+        // Calculate the forward, right, and up vectors based on the current rotation
+        let rotation = self.orientation;
+        let forward_vec = rotation * FORWARD;
+        let right_vec = rotation * RIGHT;
+        let up_vec = rotation * UP;
 
-        // Combine the rotations: yaw first, then pitch
-        yaw_quat * pitch_quat * roll_quat
+        // Update the camera position based on the movement amounts
+        self.position +=
+            forward_vec * forward_amount + right_vec * right_amount + up_vec * up_amount;
     }
 
     pub fn calc_rotation(&self) -> (Quaternion<f32>, Matrix4<f32>) {
-        let rotation = self.calc_quaternion(); // includes yaw, pitch, and roll
+        // get inverted rotation matrix from orientation
+        let rotation_matrix: Matrix4<f32> = self.orientation.into();
+        let inverted_rotation_matrix = rotation_matrix.invert().unwrap_or_else(Matrix4::zero);
 
-        // In camera space:
-        // - Forward is -Z
-        // - Right is +X
-        // - Up is +Y
+        // get translation matrix from position
+        let inverted_translation_matrix = Matrix4::from_translation(-self.position.to_vec());
 
-        // So we rotate the standard forward vector (0, 0, -1) by the rotation
-        let forward = rotation * Self::FORWARD; // rotated forward vector
-        let up = rotation * Self::UP; // rotated up vector
+        // combine the inverted translation and rotation matrices
+        let combined_matrix = inverted_rotation_matrix * inverted_translation_matrix;
 
-        (rotation, Matrix4::look_to_rh(self.position, forward, up))
+        // return the quaternion and the combined matrix
+        (self.orientation, combined_matrix)
     }
 }
 
@@ -211,17 +217,12 @@ impl CameraController {
             (self.amount_up - self.amount_down) * self.speed * dt * self.sensitivity,
         );
 
-        // Rotate - take roll into account first
-        let cos_roll = camera.roll.0.cos();
-        let sin_roll = -camera.roll.0.sin();
-        let rotated_horizontal =
-            self.rotate_horizontal * cos_roll - self.rotate_vertical * sin_roll;
-        let rotated_vertical = self.rotate_horizontal * sin_roll + self.rotate_vertical * cos_roll;
-        camera.yaw += Rad(rotated_horizontal) * self.sensitivity * dt;
-        camera.pitch += Rad(rotated_vertical) * self.sensitivity * dt;
-
-        // Roll
-        camera.roll += Rad(self.roll_right - self.roll_left) * self.sensitivity * dt;
+        // Rotate
+        camera.rotate_camera(
+            Rad(self.rotate_horizontal * self.sensitivity * dt),
+            Rad(self.rotate_vertical * self.sensitivity * dt),
+            Rad((self.roll_right - self.roll_left) * self.sensitivity * dt),
+        );
 
         // If process_mouse isn't called every frame, these values
         // will not get set to zero, and the camera will rotate
