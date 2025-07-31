@@ -11,7 +11,9 @@ mod state;
 
 pub struct App {
     state: Option<state::State>,
+    last_fps_log_time: Instant,
     last_time: Instant,
+    last_fps: f32,
 }
 
 impl App {
@@ -19,6 +21,8 @@ impl App {
         Self {
             state: None,
             last_time: Instant::now(),
+            last_fps_log_time: Instant::now(),
+            last_fps: 0.0,
         }
     }
 }
@@ -76,6 +80,15 @@ impl ApplicationHandler<state::State> for App {
             WindowEvent::RedrawRequested => {
                 let dt = self.last_time.elapsed();
                 self.last_time = Instant::now();
+                let fps = 1.0 / dt.as_secs_f32();
+                self.last_fps = 0.4 * self.last_fps + 0.6 * fps;
+
+                let dt_fps = self.last_fps_log_time.elapsed();
+                if dt_fps.as_millis() > 1000 {
+                    log::info!("FPS: {:.2}", self.last_fps);
+                    self.last_fps_log_time = Instant::now();
+                }
+
                 state.update(dt);
                 match state.render() {
                     Ok(_) => {}
