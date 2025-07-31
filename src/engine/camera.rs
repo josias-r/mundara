@@ -48,9 +48,13 @@ impl Camera {
         vertical_amount: Radable,
         roll_amount: Radable,
     ) {
-        let horizontal_rotation = Quaternion::from_axis_angle(UP, horizontal_amount.into());
-        let vertical_rotation = Quaternion::from_axis_angle(RIGHT, vertical_amount.into());
-        let roll_rotation = Quaternion::from_axis_angle(FORWARD, roll_amount.into());
+        let camera_up = self.orientation * UP;
+        let camera_right = self.orientation * RIGHT;
+        let camera_forward = self.orientation * FORWARD;
+
+        let horizontal_rotation = Quaternion::from_axis_angle(camera_up, horizontal_amount.into());
+        let vertical_rotation = Quaternion::from_axis_angle(camera_right, vertical_amount.into());
+        let roll_rotation = Quaternion::from_axis_angle(camera_forward, roll_amount.into());
 
         // Update the camera orientation by applying the rotations
         self.orientation =
