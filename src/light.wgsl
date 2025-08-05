@@ -14,10 +14,13 @@ struct ScreenUniform {
 }
 
 @group(0) @binding(0)
-var<uniform> camera: CameraUniform;
+var<uniform> screen: ScreenUniform;
 
 @group(1) @binding(0)
-var<uniform> screen: ScreenUniform;
+var<uniform> camera: CameraUniform;
+
+@group(2) @binding(0) var<storage, read> inputBuffer: array<f32>;
+@group(2) @binding(1) var<storage, read_write> outputBuffer: array<f32>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,

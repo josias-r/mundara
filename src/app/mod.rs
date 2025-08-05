@@ -7,6 +7,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::PhysicalKey;
 use winit::window::Window;
 
+mod bindings;
 mod graphic_context;
 mod render;
 
@@ -30,7 +31,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler<graphic_context::GraphicContext> for App {
+impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
         let mut window_attributes = Window::default_attributes();
