@@ -81,5 +81,11 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
         normalize(local_vec_rotated)  // Normalize the direction vector
     );
 
+    let oneD_index = u32(pixel_coords.y * screen.resolution.x + pixel_coords.x);
+    if (oneD_index < arrayLength(&outputBuffer)) {
+        let outputBufferValue = outputBuffer[oneD_index];
+        return vec4<f32>(outputBufferValue / 255.0, outputBufferValue / 255.0, outputBufferValue / 255.0, 1.0);
+    }
+
     return vec4<f32>(ray.dir, 1.0);
 }

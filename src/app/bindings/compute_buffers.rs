@@ -16,7 +16,7 @@ impl ComputeBuffersBinding {
         });
         let output_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Compute Output Buffer"),
-            contents: bytemuck::cast_slice(&[0.0f32; 100 * 100]),
+            contents: bytemuck::cast_slice(&[0.0f32; 500 * 500]),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -34,7 +34,7 @@ impl ComputeBuffersBinding {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
+                    visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,

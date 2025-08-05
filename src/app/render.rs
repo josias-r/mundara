@@ -160,6 +160,8 @@ impl Render {
 
         let camera_binding = CameraBinding::new(&camera, &projection, &state.device);
 
+        let compute_buffers_binding = ComputeBuffersBinding::new(&state.device);
+
         let render_pipeline = {
             let render_pipeline_layout =
                 state
@@ -196,6 +198,7 @@ impl Render {
                     bind_group_layouts: &[
                         &screen_binding.bind_group_layout,
                         &camera_binding.bind_group_layout,
+                        &compute_buffers_binding.bind_group_layout,
                     ],
                     push_constant_ranges: &[],
                 });
@@ -229,8 +232,6 @@ impl Render {
                 usage: wgpu::BufferUsages::INDEX,
             });
         let num_indices = INDICES.len() as u32;
-
-        let compute_buffers_binding = ComputeBuffersBinding::new(&state.device);
 
         let compute_pipeline_layout =
             state
@@ -363,7 +364,7 @@ impl Render {
             compute_pass.set_pipeline(&self.compute_pipeline);
             compute_pass.set_bind_group(0, &self.screen_binding.bind_group, &[]);
             compute_pass.set_bind_group(1, &self.compute_buffers_binding.bind_group, &[]);
-            compute_pass.dispatch_workgroups(13, 13, 1);
+            compute_pass.dispatch_workgroups(32, 32, 1);
         }
     }
 
