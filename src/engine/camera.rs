@@ -1,6 +1,6 @@
 use cgmath::{
-    Angle, EuclideanSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, SquareMatrix, Vector3,
-    Vector4, Zero, perspective,
+    Angle, EuclideanSpace, Euler, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3,
+    SquareMatrix, Vector3, Vector4, Zero, perspective,
 };
 use std::time::Duration;
 use winit::dpi::PhysicalPosition;
@@ -48,17 +48,29 @@ impl Camera {
         vertical_amount: Radable,
         roll_amount: Radable,
     ) {
+        let horizontal: Rad<f32> = horizontal_amount.into();
+        let vertical: Rad<f32> = vertical_amount.into();
+        let roll: Rad<f32> = roll_amount.into();
+
+        let eps = 0.0001;
+        // skip if rotations are minimal
+        if horizontal.0.abs() < eps && vertical.0.abs() < eps && roll.0.abs() < eps {
+            return;
+        }
+
         let camera_up = self.orientation * UP;
         let camera_right = self.orientation * RIGHT;
         let camera_forward = self.orientation * FORWARD;
 
-        let horizontal_rotation = Quaternion::from_axis_angle(camera_up, horizontal_amount.into());
-        let vertical_rotation = Quaternion::from_axis_angle(camera_right, vertical_amount.into());
-        let roll_rotation = Quaternion::from_axis_angle(camera_forward, roll_amount.into());
+        let horizontal_rotation = Quaternion::from_axis_angle(camera_up, horizontal);
+        let vertical_rotation = Quaternion::from_axis_angle(camera_right, vertical);
+        let roll_rotation = Quaternion::from_axis_angle(camera_forward, roll);
 
         // Update the camera orientation by applying the rotations
         self.orientation =
             horizontal_rotation * vertical_rotation * roll_rotation * self.orientation;
+        // Normalize the quaternion to avoid drift
+        self.orientation = self.orientation.normalize();
     }
 
     fn move_camera(&mut self, forward_amount: f32, right_amount: f32, up_amount: f32) {
@@ -83,6 +95,15 @@ impl Camera {
 
         // combine the inverted translation and rotation matrices
         let combined_matrix = inverted_rotation_matrix * inverted_translation_matrix;
+
+        // get rotation angles from the quaternion
+        let euler = Euler::from(self.orientation);
+        log::info!(
+            "Camera rotation angles: pitch: {}, yaw: {}, roll: {}",
+            euler.x.0.to_degrees(),
+            euler.y.0.to_degrees(),
+            euler.z.0.to_degrees()
+        );
 
         // return the quaternion and the combined matrix
         (inverted_rotation_matrix, combined_matrix)
