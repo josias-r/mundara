@@ -326,6 +326,13 @@ impl Render {
     }
 
     pub fn update(&mut self, dt: std::time::Duration) {
+        self.screen_binding.uniform.update_dt(dt);
+        self.graphic_context.queue.write_buffer(
+            &self.screen_binding.buffer,
+            0,
+            bytemuck::cast_slice(&[self.screen_binding.uniform]),
+        );
+
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_binding
             .uniform

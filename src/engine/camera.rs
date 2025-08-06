@@ -1,6 +1,6 @@
 use cgmath::{
-    Angle, EuclideanSpace, Euler, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3,
-    SquareMatrix, Vector3, Vector4, Zero, perspective,
+    Angle, EuclideanSpace, InnerSpace, Matrix4, Point3, Quaternion, Rad, Rotation3, SquareMatrix,
+    Vector3, Vector4, Zero, perspective,
 };
 use std::time::Duration;
 use winit::dpi::PhysicalPosition;
@@ -95,15 +95,6 @@ impl Camera {
 
         // combine the inverted translation and rotation matrices
         let combined_matrix = inverted_rotation_matrix * inverted_translation_matrix;
-
-        // get rotation angles from the quaternion
-        let euler = Euler::from(self.orientation);
-        log::info!(
-            "Camera rotation angles: pitch: {}, yaw: {}, roll: {}",
-            euler.x.0.to_degrees(),
-            euler.y.0.to_degrees(),
-            euler.z.0.to_degrees()
-        );
 
         // return the quaternion and the combined matrix
         (inverted_rotation_matrix, combined_matrix)

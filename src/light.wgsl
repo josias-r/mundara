@@ -1,4 +1,9 @@
 // Vertex shader
+struct ScreenUniform {
+    resolution: vec4<f32>,
+    time: f32,
+    dt: u32,
+}
 
 struct CameraUniform {
     view_position: vec4<f32>,
@@ -7,10 +12,6 @@ struct CameraUniform {
     projection_dimensions: vec2<f32>,
     _pad: vec2<u32>, // Padding to align to 16 bytes
     znear: f32,
-}
-
-struct ScreenUniform {
-    resolution: vec2<f32>,
 }
 
 @group(0) @binding(0)
@@ -84,7 +85,7 @@ fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     let oneD_index = u32(pixel_coords.y * screen.resolution.x + pixel_coords.x);
     if (oneD_index < arrayLength(&outputBuffer)) {
         let outputBufferValue = outputBuffer[oneD_index];
-        return vec4<f32>(outputBufferValue / 255.0, outputBufferValue / 255.0, outputBufferValue / 255.0, 1.0);
+        return vec4<f32>(outputBufferValue, outputBufferValue, outputBufferValue, 1.0);
     }
 
     return vec4<f32>(ray.dir, 1.0);

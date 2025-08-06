@@ -3,20 +3,30 @@ use wgpu::util::DeviceExt;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ScreenUniform {
-    resolution: [f32; 2],
-    _pad: [f32; 2], // Padding to align to 16 bytes
+    resolution: [f32; 4], // two extra for padding
+    time: f32,
+    _pad: [f32; 3], // Padding
+    dt: u32,
 }
 
 impl ScreenUniform {
     fn new(width: u32, height: u32) -> Self {
         Self {
-            resolution: [width as f32, height as f32],
-            _pad: [0.0; 2],
+            resolution: [width as f32, height as f32, 0.0, 0.0],
+            time: 0.0,
+            _pad: [0.0; 3],
+            dt: 0,
         }
     }
 
+    pub fn update_dt(&mut self, dt: std::time::Duration) {
+        self.dt = dt.as_millis() as u32;
+        self.time += dt.as_secs_f32();
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.resolution = [width as f32, height as f32];
+        self.resolution[0] = width as f32;
+        self.resolution[1] = height as f32;
     }
 }
 
