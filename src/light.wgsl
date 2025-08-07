@@ -23,6 +23,9 @@ var<uniform> camera: CameraUniform;
 @group(2) @binding(0) var<storage, read> inputBuffer: array<f32>;
 @group(2) @binding(1) var<storage, read_write> outputBuffer: array<f32>;
 
+@group(3) @binding(0) var<storage, read> simInputBuffer: array<f32>;
+@group(3) @binding(1) var<storage, read_write> simOutputBuffer: array<f32>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
 };
@@ -67,26 +70,65 @@ struct Ray {
 
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
-    let pixel_coords = in.frag_coord.xy;
-    let xRel = pixel_coords.x / screen.resolution.x;
-    let yRel = pixel_coords.y / screen.resolution.y;
+    let sim_texture_width = u32(256); 
+    let sim_texture_height = u32(256);
+    
+    let pixel_coords = in.frag_coord.xy / vec2<f32>(4, 4);
 
-    let x_plane = camera.projection_dimensions.x * (xRel - 0.5);
-    let y_plane = camera.projection_dimensions.y * (yRel - 0.5);
+    let sim_x = u32(pixel_coords.x) % sim_texture_width;
+    let sim_y = u32(pixel_coords.y) % sim_texture_height;
 
-    let local_vec = vec3<f32>(x_plane, y_plane, camera.znear);
-    let local_vec_rotated = (camera.camera_rot_m * vec4<f32>(local_vec, 0.0)).xyz;
+    let sim_index = sim_y * sim_texture_width + sim_x;
+    let sim_rgba_index = sim_index * 4;
 
-    let ray: Ray = Ray(
-        camera.view_position.xyz,
-        normalize(local_vec_rotated)  // Normalize the direction vector
-    );
+    let sim_double_texture_width = sim_texture_width * 2;
+    let sim_double_x = u32(pixel_coords.x) % sim_double_texture_width;
 
-    let oneD_index = u32(pixel_coords.y * screen.resolution.x + pixel_coords.x);
-    if (oneD_index < arrayLength(&outputBuffer)) {
-        let outputBufferValue = outputBuffer[oneD_index];
-        return vec4<f32>(outputBufferValue, outputBufferValue, outputBufferValue, 1.0);
+    var texture_value_r = 0.0;
+    var texture_value_g = 0.0;
+    var texture_value_b = 0.0;
+    var texture_value_a = 0.0;
+    if sim_double_x > sim_texture_width {
+        let num_ray_hits = simOutputBuffer[sim_rgba_index + 3];
+        // Display sim output texture
+        texture_value_r = simOutputBuffer[sim_rgba_index] / 100;
+        texture_value_g = simOutputBuffer[sim_rgba_index + 1] / 100;
+        texture_value_b = simOutputBuffer[sim_rgba_index + 2] / 100;
+        texture_value_a = 1.0;
+    } else {
+        texture_value_r = simInputBuffer[sim_rgba_index];
+        texture_value_g = simInputBuffer[sim_rgba_index + 1];
+        texture_value_b = simInputBuffer[sim_rgba_index + 2];
+        texture_value_a = simInputBuffer[sim_rgba_index + 3];
     }
 
-    return vec4<f32>(ray.dir, 1.0);
+
+    return vec4<f32>(
+        texture_value_r,
+        texture_value_g,
+        texture_value_b,
+        texture_value_a
+    );
+
+    // let xRel = pixel_coords.x / screen.resolution.x;
+    // let yRel = pixel_coords.y / screen.resolution.y;
+
+    // let x_plane = camera.projection_dimensions.x * (xRel - 0.5);
+    // let y_plane = camera.projection_dimensions.y * (yRel - 0.5);
+
+    // let local_vec = vec3<f32>(x_plane, y_plane, camera.znear);
+    // let local_vec_rotated = (camera.camera_rot_m * vec4<f32>(local_vec, 0.0)).xyz;
+
+    // let ray: Ray = Ray(
+    //     camera.view_position.xyz,
+    //     normalize(local_vec_rotated)  // Normalize the direction vector
+    // );
+
+    // let oneD_index = u32(pixel_coords.y * screen.resolution.x + pixel_coords.x);
+    // if (oneD_index < arrayLength(&outputBuffer)) {
+    //     let outputBufferValue = outputBuffer[oneD_index];
+    //     return vec4<f32>(outputBufferValue, outputBufferValue, outputBufferValue, 1.0);
+    // }
+
+    // return vec4<f32>(ray.dir, 1.0);
 }

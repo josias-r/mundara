@@ -36,6 +36,8 @@ impl ApplicationHandler for App {
         #[allow(unused_mut)]
         let mut window_attributes = Window::default_attributes();
 
+        window_attributes =
+            window_attributes.with_inner_size(winit::dpi::LogicalSize::new(1024.0, 512.0));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         let state = pollster::block_on(graphic_context::GraphicContext::new(&window)).unwrap();

@@ -13,6 +13,7 @@ use crate::engine::CameraController;
 use crate::engine::Projection;
 use crate::engine::Texture;
 use crate::engine::create_render_pipeline;
+use crate::engine::raycast_2d::sandbox_scenario;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -83,6 +84,8 @@ pub struct Render {
     screen_binding: ScreenUniformBinding,
     compute_buffers_binding: ComputeBuffersBinding,
     camera_binding: CameraBinding,
+
+    simulation_bind_group: wgpu::BindGroup,
 }
 
 impl Render {
@@ -162,6 +165,52 @@ impl Render {
 
         let compute_buffers_binding = ComputeBuffersBinding::new(&state.device);
 
+        let simulation_texture = sandbox_scenario();
+        let (simulation_input_buffer, simulation_output_buffer) =
+            simulation_texture.into_rgba_buffer(&state.device, &state.queue);
+        let simulation_bind_group_layout =
+            state
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                    label: Some("compute_buffers_bind_group_layout"),
+                });
+        let simulation_bind_group = state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &simulation_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: simulation_input_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: simulation_output_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("simulation_bind_group"),
+        });
+
         let render_pipeline = {
             let render_pipeline_layout =
                 state
@@ -199,6 +248,7 @@ impl Render {
                         &screen_binding.bind_group_layout,
                         &camera_binding.bind_group_layout,
                         &compute_buffers_binding.bind_group_layout,
+                        &simulation_bind_group_layout,
                     ],
                     push_constant_ranges: &[],
                 });
@@ -284,6 +334,8 @@ impl Render {
             compute_buffers_binding,
             mouse_pressed: false,
             compute_pipeline,
+
+            simulation_bind_group,
         }
     }
 
@@ -396,6 +448,7 @@ impl Render {
             render_pass.set_bind_group(0, &self.screen_binding.bind_group, &[]);
             render_pass.set_bind_group(1, &self.camera_binding.bind_group, &[]);
             render_pass.set_bind_group(2, &self.compute_buffers_binding.bind_group, &[]);
+            render_pass.set_bind_group(3, &self.simulation_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
 
